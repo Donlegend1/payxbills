@@ -2,6 +2,7 @@
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import AuthLayout from '@/Layouts/AuthLayout.vue';
 import InputError from '@/Components/InputError.vue';
+import PasswordInput from '@/Components/PasswordInput.vue';
 
 defineProps({ canResetPassword: Boolean, status: String });
 
@@ -31,7 +32,7 @@ const submit = () => form.post(route('login'), { onFinish: () => form.reset('pas
                     Password
                     <Link v-if="canResetPassword" :href="route('password.request')" class="linkish">Forgot password?</Link>
                 </span>
-                <input v-model="form.password" type="password" required autocomplete="current-password" />
+                <PasswordInput v-model="form.password" required autocomplete="current-password" />
                 <InputError :message="form.errors.password" />
             </label>
             <label class="check"><input v-model="form.remember" type="checkbox" /> Keep me signed in</label>

@@ -35,7 +35,7 @@ class FacilityFlowTest extends TestCase
         Storage::fake('local');
     }
 
-    public function test_supervisor_registers_a_facility_user_who_gets_login_details_and_a_first_bill(): void
+    public function test_supervisor_registers_a_facility_user_who_is_billed_once_the_admin_activates_them(): void
     {
         $supervisor = $this->staff('supervisor');
         $facility = $this->facility($supervisor);
@@ -49,24 +49,31 @@ class FacilityFlowTest extends TestCase
         ])->assertSessionHasNoErrors();
 
         $user = User::where('email', 'ada@example.com')->firstOrFail();
+        $occupancy = $user->occupancy;
         $this->assertTrue($user->isFacilityUser());
-        $this->assertTrue($user->must_change_password);
-        $this->assertSame($space->id, $user->occupancy->space_id);
+        $this->assertFalse($user->must_change_password, 'no password is sent: they pay from the link');
+        $this->assertSame($space->id, $occupancy->space_id);
+        $this->assertSame('pending', $occupancy->billingState());
+        $this->assertSame(0, Invoice::count(), 'not billed before activation');
+        $this->assertSame(0, MessageLog::count(), 'nothing sent before activation');
 
-        $welcome = MessageLog::where('type', 'welcome')->sole();
-        $this->assertStringContainsString('[hidden]', $welcome->message, 'the password is never stored');
-        $this->assertSame('sent', $welcome->status);
+        // Only the admin starts billing
+        $this->post("/facility-users/{$occupancy->id}/activate")->assertForbidden();
+        $this->actingAs($this->staff('admin'))->post("/facility-users/{$occupancy->id}/activate")->assertSessionHasNoErrors();
 
-        Notification::assertSentTo($user, FacilityUserWelcome::class, function (FacilityUserWelcome $n) use ($user, $space) {
-            $mail = $n->toMail($user);
-
-            return Hash::check($n->password, $user->password)
-                && $mail->actionUrl === route('login')
-                && str_contains(implode("\n", $mail->introLines), $space->name());
-        });
+        $this->assertSame('active', $occupancy->fresh()->billingState());
+        $welcome = MessageLog::where('type', 'activation')->where('channel', 'email')->sole();
+        $this->assertStringContainsString($occupancy->payUrl(), $welcome->message);
+        $this->assertStringContainsString(route('password.request'), $welcome->message, 'how to see their transactions');
+        Notification::assertNothingSent();
 
         $this->assertEquals(20000, Invoice::sole()->amount);
         $this->assertTrue(MessageLog::where('type', 'invoice')->where('channel', 'sms')->exists());
+
+        // Deactivating stops billing
+        $this->post("/facility-users/{$occupancy->id}/deactivate")->assertSessionHasNoErrors();
+        $this->assertSame('deactivated', $occupancy->fresh()->billingState());
+        $this->assertTrue(app(BillingService::class)->generateMonthly(Carbon::parse('2026-04-01'))->isEmpty());
     }
 
     public function test_a_space_holds_one_facility_user_at_a_time(): void
@@ -150,8 +157,8 @@ class FacilityFlowTest extends TestCase
         $user = $old->user->fresh();
         $this->assertSame(1, User::where('email', 'ada@example.com')->count(), 'same account, not a duplicate');
         $this->assertTrue($user->is_active);
-        $this->assertTrue($user->must_change_password);
         $this->assertSame($space->id, $user->occupancy->space_id);
+        $this->assertSame('pending', $user->occupancy->billingState(), 'billed again only once activated');
         $this->assertSame(2, $user->occupancies()->count(), 'earlier occupancy kept on record');
 
         // While they hold a space, the email cannot be registered again
@@ -177,7 +184,7 @@ class FacilityFlowTest extends TestCase
         $this->actingAs($user->fresh())->get('/portal')->assertInertia(fn (Assert $page) => $page
             ->component('Portal/Home')
             ->where('account.facility.name', 'Green Valley Hostel')
-            ->where('account.space', 'Room 101')
+            ->where('account.space', 'Room 101, Green Valley Hostel')
             ->has('options', 12));
 
         foreach (['/facility-users', '/payments', '/invoices', '/settings'] as $url) {
@@ -290,7 +297,7 @@ class FacilityFlowTest extends TestCase
             ->component('Receipt')
             ->where('receipt.facility.name', 'Green Valley Hostel')
             ->where('receipt.facility.address', 'Plot 12, Lekki')
-            ->where('receipt.space', 'Room 101')
+            ->where('receipt.space', 'Room 101, Green Valley Hostel')
             ->where('receipt.lines.0.month', 'March 2026')
             ->where('receipt.lines.1.month', 'April 2026'));
 

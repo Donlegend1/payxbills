@@ -32,7 +32,13 @@ class BillingService
         }
 
         $occupancy->loadMissing(['category', 'facility', 'space']);
-        $billingDate = $month->copy()->setDay(min((int) Setting::get('billing_day'), $month->daysInMonth));
+
+        // Nothing to bill: no category (or a category with no amount)
+        if ($occupancy->monthlyAmount() <= 0) {
+            return null;
+        }
+
+        $billingDate = $month->copy()->setDay(min($occupancy->billingDay(), $month->daysInMonth));
         // Months paid ahead are issued today, but still fall due in their own month
         $issue = $billingDate->gt(today()) ? today() : $billingDate;
 
@@ -40,8 +46,8 @@ class BillingService
             $invoice = Invoice::create([
                 'occupancy_id' => $occupancy->id,
                 'period' => $period,
-                'description' => "{$occupancy->category->name} dues – {$month->format('F Y')} ({$occupancy->facility->name}, {$occupancy->space->name()})",
-                'amount' => $occupancy->category->monthly_amount,
+                'description' => trim(($occupancy->categoryName() ?? 'Monthly').' dues – '.$month->format('F Y').($occupancy->placeName() !== '—' ? " ({$occupancy->placeName()})" : '')),
+                'amount' => $occupancy->monthlyAmount(),
                 'issue_date' => $issue,
                 'due_date' => $billingDate->copy()->addDays((int) Setting::get('due_days')),
                 'nrs_copy' => (bool) Setting::get('nrs_enabled'),
@@ -68,15 +74,18 @@ class BillingService
         $today = ($today ?? today())->copy()->startOfDay();
         $issued = collect();
 
-        if ($today->day < min((int) Setting::get('billing_day'), $today->daysInMonth)) {
-            return $issued;
-        }
-
-        Occupancy::active()
+        // Only facility users the admin has activated
+        Occupancy::billing()
             ->with(['category', 'facility', 'space'])
             ->whereDate('start_date', '<=', $today)
-            ->whereHas('facility', fn ($q) => $q->active())
+            // Clients outside any facility are billed too; those in a closed facility are not
+            ->where(fn ($q) => $q->whereNull('facility_id')->orWhereHas('facility', fn ($f) => $f->active()))
             ->each(function (Occupancy $occupancy) use ($today, $issued) {
+                // Each client is billed on their own billing day (or the company's)
+                if ($today->day < min($occupancy->billingDay(), $today->daysInMonth)) {
+                    return;
+                }
+
                 if ($invoice = $this->issueForPeriod($occupancy, $today)) {
                     $issued->push($invoice);
                 }
@@ -108,7 +117,7 @@ class BillingService
             $plan->push([
                 'period' => $next->format('Y-m'),
                 'label' => $next->format('F Y'),
-                'amount' => (float) $occupancy->category->monthly_amount,
+                'amount' => $occupancy->monthlyAmount(),
                 'invoice_id' => null,
             ]);
             $next->addMonthNoOverflow();

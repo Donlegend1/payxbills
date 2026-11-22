@@ -80,7 +80,10 @@ const statuses = [['', 'All'], ['under_review', 'Awaiting clearance'], ['pending
                     <td>{{ p.source_label }}</td>
                     <td class="small">{{ p.covers.join(', ') || '—' }}</td>
                     <td class="small">
-                        <a v-for="a in p.attachments" :key="a.id" :href="route('payments.attachment', a.id)" style="display: block">{{ a.name }}</a>
+                        <div v-for="a in p.attachments" :key="a.id" style="white-space: nowrap">
+                            <a :href="route('payments.attachment', a.id)" target="_blank" rel="noopener">{{ a.name }}</a>
+                            <a :href="route('payments.attachment', { attachment: a.id, download: 1 })" class="sub small" style="margin-left: 6px">Download</a>
+                        </div>
                         <span v-if="!p.attachments.length" class="sub">—</span>
                     </td>
                     <td>
@@ -134,7 +137,7 @@ const statuses = [['', 'All'], ['under_review', 'Awaiting clearance'], ['pending
             <form v-if="clearing" class="grid" @submit.prevent="clear">
                 <p class="sub" style="margin: 0">{{ clearing.method }} on {{ clearing.date }}<template v-if="clearing.months"> for {{ clearing.months }} month(s)</template>. Check it against the bank statement before clearing.</p>
                 <label class="field">Bank / teller reference<input v-model="clearForm.reference" required maxlength="100" /><InputError :message="clearForm.errors.reference" /></label>
-                <div v-if="clearing.attachments.length" class="sub small">On file: <a v-for="a in clearing.attachments" :key="a.id" :href="route('payments.attachment', a.id)" style="margin-right: 8px">{{ a.name }}</a></div>
+                <div v-if="clearing.attachments.length" class="sub small">On file: <span v-for="a in clearing.attachments" :key="a.id" style="margin-right: 10px"><a :href="route('payments.attachment', a.id)" target="_blank" rel="noopener">{{ a.name }}</a> (<a :href="route('payments.attachment', { attachment: a.id, download: 1 })">download</a>)</span></div>
                 <label class="field">{{ clearing.attachments.length ? 'Add more proof (optional)' : 'Attach proof (required)' }}
                     <input type="file" multiple accept="image/*,application/pdf" :required="!clearing.attachments.length" @change="clearForm.files = [...$event.target.files]" />
                     <InputError :message="clearForm.errors.files || clearForm.errors['files.0']" />

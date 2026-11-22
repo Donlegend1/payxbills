@@ -6,9 +6,10 @@ import PageHeader from '@/Components/PageHeader.vue';
 import StatusPill from '@/Components/StatusPill.vue';
 import Modal from '@/Components/Modal.vue';
 import InputError from '@/Components/InputError.vue';
+import NameList from '@/Components/NameList.vue';
 import { N } from '@/format';
 
-defineProps({ categories: Array });
+defineProps({ categories: Array, binTypes: Array });
 
 const blank = { name: '', monthly_amount: '', description: '', is_active: true };
 const form = useForm({ ...blank });
@@ -33,7 +34,7 @@ function save() {
     <AppLayout>
         <Head title="Categories" />
 
-        <PageHeader title="Categories" sub="Each facility user is in one category and pays its amount every month.">
+        <PageHeader title="Categories" sub="Each facility user is in one category (e.g. House, School, Shop) and pays its monthly amount. Change an amount here to reprice everyone in that category.">
             <button class="chip on" @click="open()">Add category</button>
         </PageHeader>
 
@@ -48,16 +49,20 @@ function save() {
                     <td><button class="chip" @click="open(c)">Edit</button></td>
                 </tr>
             </table>
-            <div v-else class="empty">No categories yet. Add one before registering facility users.</div>
+            <div v-else class="empty">No categories yet. Add your first, e.g. House at ₦8,000 a month.</div>
+        </div>
+
+        <div class="grid auto" style="margin-top: 16px">
+            <NameList list="bin-types" title="Bin types" :items="binTypes" placeholder="e.g. Wheeler bin, Mammoth bin" help="The bins you collect from facility users." />
         </div>
 
         <Modal :show="show" :title="editing ? `Edit ${editing.name}` : 'Add category'" @close="show = false">
             <form class="grid" @submit.prevent="save">
-                <label class="field">Name<input v-model="form.name" required placeholder="e.g. Standard room" /><InputError :message="form.errors.name" /></label>
+                <label class="field">Name<input v-model="form.name" required placeholder="e.g. House, School, Shop" /><InputError :message="form.errors.name" /></label>
                 <label class="field">Monthly amount (₦)<input v-model="form.monthly_amount" type="number" min="1" step="0.01" required /><InputError :message="form.errors.monthly_amount" /></label>
                 <label class="field">Description (optional)<input v-model="form.description" /><InputError :message="form.errors.description" /></label>
                 <label class="check"><input v-model="form.is_active" type="checkbox" /> Available for new facility users</label>
-                <p v-if="editing" class="sub small" style="margin: 0">A new amount applies from the next month billed. Months already issued keep their amount.</p>
+                <p v-if="editing" class="sub small" style="margin: 0">A new amount reprices all {{ editing.members }} facility user{{ editing.members === 1 ? '' : 's' }} in this category from their next bill. Months already billed keep their amount.</p>
                 <div class="modal-foot">
                     <button type="button" class="btn ghost" @click="show = false">Cancel</button>
                     <button class="btn" :disabled="form.processing">Save category</button>

@@ -9,7 +9,7 @@ defineProps({ receipt: Object, inApp: Boolean });
 </script>
 
 <template>
-    <component :is="inApp ? AppLayout : PublicLayout">
+    <component :is="inApp ? AppLayout : PublicLayout" v-bind="inApp ? {} : { whatsapp: $page.props.currentCompany?.whatsapp ?? '', whatsappMessage: `Hello ${receipt.company.name}, about receipt ${receipt.number}.` }">
         <Head :title="`Receipt ${receipt.number}`" />
 
         <div :class="inApp ? '' : 'wrap'" :style="inApp ? 'max-width: 820px' : 'max-width: 820px; padding: 32px 0'">
@@ -38,8 +38,8 @@ defineProps({ receipt: Object, inApp: Boolean });
 
                 <div class="form">
                     <div>
-                        <div class="sub small">Facility</div>
-                        <b>{{ receipt.facility.name }}</b>
+                        <div class="sub small">{{ receipt.facility.name ? 'Facility' : 'Address' }}</div>
+                        <b>{{ receipt.facility.name ?? receipt.space }}</b>
                         <div class="sub">
                             <div v-if="receipt.facility.address">{{ receipt.facility.address }}</div>
                             <div v-if="receipt.facility.phone">Tel: {{ receipt.facility.phone }}</div>
@@ -51,7 +51,7 @@ defineProps({ receipt: Object, inApp: Boolean });
                         <b>{{ receipt.payer.name }}</b>
                         <div class="sub">
                             <div>Account {{ receipt.payer.account }}</div>
-                            <div>{{ receipt.space }} · {{ receipt.category }}</div>
+                            <div>{{ receipt.space }}<template v-if="receipt.category"> · {{ receipt.category }}</template></div>
                             <div v-if="receipt.payer.phone">{{ receipt.payer.phone }}</div>
                         </div>
                     </div>

@@ -23,6 +23,8 @@ return [
         'vendor' => 'Fivestar Technologies',
         'email' => env('PLATFORM_EMAIL', 'hello@payxbills.com'),
         'phone' => env('PLATFORM_PHONE', '+234 800 000 0000'),
+        // Fivestar Technologies support on WhatsApp, international format without "+"
+        'whatsapp' => env('PLATFORM_WHATSAPP', '2348000000000'),
     ],
 
     /*

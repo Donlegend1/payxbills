@@ -17,17 +17,18 @@ class AccountSummary
 
     public function account(Occupancy $occupancy): array
     {
-        $occupancy->loadMissing(['user', 'facility', 'space', 'category']);
+        $occupancy->loadMissing(['user', 'facility', 'space', 'category', 'binType']);
         $paidThrough = $occupancy->paidThrough();
 
         return [
             'code' => $occupancy->code,
             'name' => $occupancy->user->name,
             'email' => $occupancy->user->email,
-            'facility' => $occupancy->facility->only('name', 'address', 'phone', 'email'),
-            'space' => $occupancy->space->name(),
-            'category' => $occupancy->category->name,
-            'monthly' => (float) $occupancy->category->monthly_amount,
+            'facility' => $occupancy->facilityDetails(),
+            'space' => $occupancy->placeName(),
+            'category' => $occupancy->categoryName(),
+            'service' => $occupancy->serviceSummary(),
+            'monthly' => $occupancy->monthlyAmount(),
             'paid_through' => $paidThrough?->format('F Y'),
             'outstanding' => $occupancy->outstanding(),
             'overdue' => $occupancy->invoices()->overdue()->count(),

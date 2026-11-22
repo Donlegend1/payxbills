@@ -49,6 +49,9 @@ trait CreatesFacilityUsers
             'space_id' => $space->id,
             'category_id' => $category->id,
             'start_date' => $start,
+            // Already activated, like everyone billed today
+            'billing_active' => true,
+            'activated_at' => $start,
         ]);
     }
 

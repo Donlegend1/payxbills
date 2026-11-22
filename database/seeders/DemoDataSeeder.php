@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Enums\Role;
+use App\Models\BinType;
 use App\Models\Category;
 use App\Models\Expense;
 use App\Models\Facility;
@@ -98,6 +99,8 @@ class DemoDataSeeder extends Seeder
                     'category_id' => $categories[$types[$i % count($types)]]->id,
                     'start_date' => $start->copy()->addMonthsNoOverflow(mt_rand(0, 4))->addDays(mt_rand(0, 20)),
                     'registered_by' => $by->id,
+                    'billing_active' => true,
+                    'activated_at' => $start,
                 ]);
 
                 $profiles[$occupancy->id] = $i === 0 ? 'good' : $this->pick(['good' => 50, 'ahead' => 12, 'late' => 18, 'partial' => 8, 'stopped' => 12]);
@@ -156,6 +159,7 @@ class DemoDataSeeder extends Seeder
         RemovalRequest::create(['occupancy_id' => $leaving->id, 'requested_by' => $supervisor->id, 'reason' => 'Moved out at the end of last month', 'status' => 'pending']);
 
         $this->memos($facilities->map(fn ($f) => $f[0]), $supervisor, $accountant, $management);
+        $this->wasteClients($billing, $admin);
     }
 
     protected function pay(BillingService $billing, Occupancy $occupancy, ?float $amount, ?int $months, Carbon $date, User $accountant): void
@@ -211,29 +215,87 @@ class DemoDataSeeder extends Seeder
 
     protected function memos($facilities, User $supervisor, User $accountant, User $management): void
     {
+        // [description, [[category, amount], ...]]
         $items = [
-            ['Cleaning chemicals restock', 'Supplies', 85000], ['Generator repair', 'Equipment', 96000],
-            ['Fuel for generator', 'Fuel and transport', 120000], ['Overtime for security', 'Staff', 60000],
-            ['Uniforms for cleaners', 'Uniforms', 48000], ['Waste disposal fees', 'Supplies', 34000],
-            ['Plumbing repairs', 'Equipment', 55000], ['Mops, brooms and buckets', 'Supplies', 22000],
+            ['Cleaning chemicals restock', [['Supplies', 85000]]], ['Generator repair', [['Equipment', 96000]]],
+            ['Fuel for generator', [['Fuel and transport', 120000]]], ['Overtime for security', [['Staff', 60000]]],
+            ['Uniforms and boots for cleaners', [['Uniforms', 48000], ['Supplies', 12000]]], ['Waste disposal fees', [['Supplies', 34000]]],
+            ['Plumbing repairs and transport', [['Equipment', 55000], ['Fuel and transport', 8000]]], ['Mops, brooms and buckets', [['Supplies', 22000]]],
         ];
 
         foreach (range(0, 15) as $i) {
-            [$text, $category, $amount] = $items[$i % count($items)];
+            [$text, $lines] = $items[$i % count($items)];
             $date = today()->subDays(mt_rand(0, 55));
-            $status = $date->gt(today()->subDays(5)) ? 'pending' : $this->pick(['approved' => 85, 'rejected' => 15]);
+            $status = $date->gt(today()->subDays(5)) ? 'pending' : $this->pick(['approved' => 70, 'partially_approved' => 10, 'kiv' => 8, 'rejected' => 12]);
+            $lines = array_map(fn ($l) => [$l[0], $l[1] + mt_rand(-5, 5) * 1000], $lines);
 
-            Expense::create([
+            // A partial approval needs more than one category; single-category memos are approved for less
+            $approve = fn (int $n, float $amount) => match ($status) {
+                'approved' => $amount,
+                'partially_approved' => count($lines) > 1 ? ($n === 0 ? $amount : null) : round($amount * 0.8, -3),
+                default => null,
+            };
+
+            $expense = Expense::create([
                 'spent_on' => $date,
                 'description' => $text,
-                'category' => $category,
+                'category' => count($lines) === 1 ? $lines[0][0] : 'Multiple',
                 'facility_id' => $facilities[$i % $facilities->count()]->id,
-                'amount' => $amount + mt_rand(-10, 10) * 1000,
+                'amount' => array_sum(array_column($lines, 1)),
                 'status' => $status,
                 'requested_by' => $i % 3 ? $supervisor->id : $accountant->id,
                 'reviewed_by' => $status === 'pending' ? null : $management->id,
                 'reviewed_at' => $status === 'pending' ? null : $date->copy()->addDay(),
+                'review_note' => match ($status) {
+                    'kiv' => 'Waiting for a second quote',
+                    'rejected' => 'Not in this month\'s budget',
+                    default => null,
+                },
             ]);
+
+            foreach ($lines as $n => [$category, $amount]) {
+                $expense->lines()->create(['category' => $category, 'amount' => $amount, 'approved_amount' => $approve($n, $amount)]);
+            }
+
+            if (in_array($status, Expense::RECORDED, true)) {
+                $expense->update(['approved_amount' => $expense->lines()->sum('approved_amount')]);
+            }
+        }
+    }
+
+    /**
+     * Waste-collection clients: an address, a type of facility and bins, no facility or space.
+     */
+    protected function wasteClients(BillingService $billing, User $by): void
+    {
+        // Each category carries the monthly amount
+        $types = collect(['House' => 8000, 'School' => 65000, 'Shop' => 12000, 'Office' => 40000, 'Hotel' => 120000])
+            ->map(fn ($amount, $name) => Category::firstOrCreate(['name' => $name], ['monthly_amount' => $amount]));
+        $bins = collect(['Wheeler bin', 'Mammoth bin'])->mapWithKeys(fn ($n) => [$n => BinType::create(['name' => $n])]);
+
+        // [name, house, street, district, category, bin, bins, per week]
+        $clients = [
+            ['Okonkwo Residence', '12', 'Allen Avenue', 'Ikeja', 'House', 'Wheeler bin', 2, 2, 8000],
+            ['Bright Future Academy', '4', 'School Road', 'Surulere', 'School', 'Mammoth bin', 3, 5, 65000],
+            ['Mama Put Kitchen', '27B', 'Market Street', 'Yaba', 'Shop', 'Wheeler bin', 1, 6, 12000],
+            ['Lekki Towers Office', '1', 'Admiralty Way', 'Lekki', 'Office', 'Mammoth bin', 2, 3, 40000],
+            ['Seaside Hotel', '9', 'Ozumba Mbadiwe', 'Victoria Island', 'Hotel', 'Mammoth bin', 4, 7, 120000],
+            ['Adeyemi Family', '3', 'Bode Thomas Street', 'Surulere', 'House', 'Wheeler bin', 1, 1, 5000],
+        ];
+
+        foreach ($clients as $i => [$name, $house, $street, $district, $type, $bin, $count, $often]) {
+            $user = User::create(['name' => $name, 'phone' => '+23470'.str_pad((string) (31000000 + $i), 8, '0', STR_PAD_LEFT), 'role' => Role::FacilityUser, 'password' => 'password']);
+
+            $occupancy = Occupancy::create([
+                'user_id' => $user->id, 'house_no' => $house, 'street' => $street, 'district' => $district,
+                'category_id' => $types[$type]->id, 'bin_type_id' => $bins[$bin]->id, 'bins' => $count, 'frequency' => $often,
+                'billing_day' => [1, 5, 10, 15][$i % 4], 'billing_active' => true, 'activated_at' => now(),
+                'start_date' => today()->startOfMonth()->subMonthsNoOverflow(2), 'registered_by' => $by->id,
+            ]);
+
+            foreach ([2, 1, 0] as $back) {
+                $billing->issueForPeriod($occupancy, today()->startOfMonth()->subMonthsNoOverflow($back));
+            }
         }
     }
 

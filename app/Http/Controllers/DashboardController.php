@@ -9,6 +9,7 @@ use App\Models\Payment;
 use App\Models\RemovalRequest;
 use App\Services\Metrics;
 use App\Support\Money;
+use App\Tenancy\CurrentCompany;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -20,7 +21,8 @@ class DashboardController extends Controller
     {
         $user = $request->user();
 
-        if ($user->isPlatformAdmin()) {
+        // The super admin sees all companies until they open one
+        if ($user->isPlatformAdmin() && ! CurrentCompany::id()) {
             return redirect()->route('platform.companies');
         }
 
@@ -70,7 +72,7 @@ class DashboardController extends Controller
                 ['Removal requests awaiting approval', RemovalRequest::where('status', 'pending')->count(), 'facility-users'],
                 ['Manual payments awaiting clearance', Payment::where('status', 'under_review')->count(), 'payments'],
                 ['Facility users overdue > 90 days', $overdue->filter(fn (Invoice $i) => $i->daysOverdue() > 90)->unique('occupancy_id')->count(), 'receivables'],
-                ['Expense memos awaiting approval', Expense::where('status', 'pending')->count(), 'expenditure'],
+                ['Expense memos awaiting a decision (pending or KIV)', Expense::reviewable()->count(), 'expenditure'],
             ],
             'clientStatus' => $status,
             'insights' => [

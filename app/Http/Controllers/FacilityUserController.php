@@ -2,12 +2,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BinType;
 use App\Models\Category;
+use App\Models\ClientChangeRequest;
 use App\Models\Facility;
 use App\Models\Occupancy;
 use App\Models\RemovalRequest;
 use App\Models\Space;
 use App\Models\User;
+use App\Services\ClientImport;
 use App\Services\FacilityUserService;
 use App\Services\Messenger;
 use App\Support\Money;
@@ -21,6 +24,7 @@ use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 use InvalidArgumentException;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
  * Facility users: registered by supervisors (or the super admin) into a vacant space,
@@ -31,13 +35,13 @@ class FacilityUserController extends Controller
     public function index(Request $request): Response
     {
         $user = $request->user();
-        $filters = $request->only('status', 'facility', 'category', 'q');
+        $filters = $request->only('status', 'facility', 'category', 'bin', 'district', 'q');
         $overdue = fn (Builder $q) => $q->overdue();
         $status = $filters['status'] ?? '';
 
         $occupancies = Occupancy::query()
             ->visibleTo($user)
-            ->with(['user:id,name,email,phone,is_active', 'facility:id,name', 'space:id,number,label', 'category:id,name,monthly_amount', 'pendingRemoval.requester:id,name'])
+            ->with(['user:id,name,email,phone,is_active', 'facility:id,name', 'space:id,number,label', 'category:id,name,monthly_amount', 'binType:id,name', 'pendingRemoval.requester:id,name', 'pendingChange.requester:id,name'])
             ->withCount(['invoices as overdue_count' => $overdue])
             ->withSum(['invoices as open_amount' => fn ($q) => $q->open()], 'amount')
             ->withSum(['invoices as open_paid' => fn ($q) => $q->open()], 'amount_paid')
@@ -46,14 +50,18 @@ class FacilityUserController extends Controller
             ->when($status === 'amber', fn (Builder $q) => $q->whereHas('invoices', $overdue, '=', 1))
             ->when($status === 'red', fn (Builder $q) => $q->whereHas('invoices', $overdue, '>', 1))
             ->when($status === 'removal', fn (Builder $q) => $q->whereHas('pendingRemoval'))
+            ->when($status === 'changes', fn (Builder $q) => $q->whereHas('pendingChange'))
+            ->when($status === 'billing', fn (Builder $q) => $q->where('billing_active', true))
+            ->when($status === 'not-activated', fn (Builder $q) => $q->where('billing_active', false)->whereNull('activated_at'))
+            ->when($status === 'deactivated', fn (Builder $q) => $q->where('billing_active', false)->whereNotNull('activated_at'))
             ->when($filters['facility'] ?? null, fn (Builder $q, $id) => $q->where('facility_id', $id))
             ->when($filters['category'] ?? null, fn (Builder $q, $id) => $q->where('category_id', $id))
-            ->when($filters['q'] ?? null, fn (Builder $q, string $s) => $q->where(fn (Builder $w) => $w
-                ->where('code', 'like', "%{$s}%")
-                ->orWhereHas('user', fn (Builder $u) => $u->where('name', 'like', "%{$s}%")->orWhere('email', 'like', "%{$s}%")->orWhere('phone', 'like', "%{$s}%"))
-                ->orWhereHas('space', fn (Builder $sp) => $sp->where('number', 'like', "%{$s}%"))))
+            ->when($filters['bin'] ?? null, fn (Builder $q, $id) => $q->where('bin_type_id', $id))
+            ->when($filters['district'] ?? null, fn (Builder $q, $d) => $q->where('district', $d))
+            ->when(trim($filters['q'] ?? ''), fn (Builder $q, string $s) => $this->search($q, $s))
             ->orderBy(Facility::select('name')->whereColumn('facilities.id', 'occupancies.facility_id'))
             ->orderBy(Space::select('number')->whereColumn('spaces.id', 'occupancies.space_id'))
+            ->orderBy('district')->orderBy('street')->orderBy('id')
             ->paginate(25)
             ->withQueryString()
             ->through(fn (Occupancy $o) => [
@@ -63,19 +71,28 @@ class FacilityUserController extends Controller
                 'name' => $o->user->name,
                 'email' => $o->user->email,
                 'phone' => $o->user->phone,
-                'facility_id' => $o->facility_id,
-                'facility' => $o->facility->name,
-                'space_id' => $o->space_id,
-                'space' => $o->space->name(),
-                'category_id' => $o->category_id,
-                'category' => $o->category->name,
-                'monthly' => (float) $o->category->monthly_amount,
+                // Every detail, for the edit form
+                ...$o->only(FacilityUserService::CLIENT_FIELDS),
+                'facility' => $o->facility?->name,
+                'space' => $o->space?->name(),
+                'place' => $o->placeName(),
+                'category' => $o->categoryName(),
+                'service' => $o->serviceSummary(),
+                'monthly' => $o->monthlyAmount(),
                 'start_date' => $o->start_date->toDateString(),
                 'ended' => $o->end_date?->format('j M Y'),
                 'is_active' => $o->isActive(),
                 'paid_through' => $o->paidThrough()?->format('M Y'),
                 'outstanding' => round((float) $o->open_amount - (float) $o->open_paid, 2),
                 'overdue_count' => $o->overdue_count,
+                'billing' => $o->billingState(),
+                'activated' => $o->activated_at?->format('j M Y'),
+                'change' => $o->pendingChange ? [
+                    'id' => $o->pendingChange->id,
+                    'by' => $o->pendingChange->requester?->name,
+                    'at' => $o->pendingChange->created_at->format('j M Y'),
+                    'fields' => app(FacilityUserService::class)->describe($o, $o->pendingChange->changes),
+                ] : null,
                 'removal' => $o->pendingRemoval ? [
                     'id' => $o->pendingRemoval->id,
                     'reason' => $o->pendingRemoval->reason,
@@ -99,35 +116,82 @@ class FacilityUserController extends Controller
             'facilities' => $facilities,
             'categories' => Category::active()->orderBy('name')->get(['id', 'name', 'monthly_amount'])
                 ->map(fn (Category $c) => ['id' => $c->id, 'name' => $c->name.' – '.Money::format($c->monthly_amount)]),
+            'binTypes' => BinType::active()->orderBy('name')->get(['id', 'name']),
+            'districts' => Occupancy::whereNotNull('district')->distinct()->orderBy('district')->pluck('district'),
+            'pendingChanges' => ClientChangeRequest::where('status', 'pending')
+                ->whereHas('occupancy', fn (Builder $q) => $q->visibleTo($user))
+                ->count(),
+            'notActivated' => Occupancy::active()->visibleTo($user)->where('billing_active', false)->whereNull('activated_at')->count(),
             'pendingRemovals' => RemovalRequest::where('status', 'pending')
                 ->whereHas('occupancy', fn (Builder $q) => $q->visibleTo($user))
                 ->count(),
         ]);
     }
 
+    /**
+     * Enrol or update clients from an Excel or CSV file (see ClientImport for the layout).
+     */
+    public function import(Request $request, ClientImport $import): RedirectResponse
+    {
+        $data = $request->validate([
+            'file' => ['required', 'file', 'mimes:xlsx,csv,txt', 'max:10240'],
+            'activate' => ['boolean'],
+        ], ['file.mimes' => 'Upload an Excel (.xlsx) or CSV file.']);
+
+        // Only the admin may start billing
+        $activate = (bool) ($data['activate'] ?? false) && $request->user()->can('activate-billing');
+
+        $file = $data['file'];
+
+        try {
+            $result = $import->import($file->getRealPath(), $file->getClientOriginalExtension(), $request->user(), $activate);
+        } catch (InvalidArgumentException $e) {
+            return back()->withErrors(['file' => $e->getMessage()]);
+        }
+
+        $summary = "{$result['created']} facility user(s) added".($activate ? ' and activated' : ' (activate them to start billing)').", {$result['updated']} updated."
+            .($result['pending'] ? " Changes to {$result['pending']} wait for the admin's approval." : '');
+        $errors = $result['errors'];
+
+        return back()
+            ->with($errors ? 'error' : 'success', $errors ? $summary.' '.count($errors).' row(s) were skipped: see the list below.' : $summary)
+            ->with('importErrors', array_slice($errors, 0, 100));
+    }
+
+    /**
+     * An empty sheet in the import layout, with one example row.
+     */
+    public function template(ClientImport $import): BinaryFileResponse
+    {
+        $path = tempnam(sys_get_temp_dir(), 'pxb').'.xlsx';
+        $import->export($path);
+
+        return response()->download($path, 'clients-template.xlsx')->deleteFileAfterSend();
+    }
+
+    /**
+     * Every active client this user can see, in the import layout: edit in Excel and upload again.
+     */
+    public function export(Request $request, ClientImport $import): BinaryFileResponse
+    {
+        $clients = Occupancy::active()->visibleTo($request->user())
+            ->with(['user:id,name,email,phone', 'facility:id,name', 'category:id,name,monthly_amount', 'binType:id,name'])
+            ->orderBy('id')->get();
+
+        $path = tempnam(sys_get_temp_dir(), 'pxb').'.xlsx';
+        $import->export($path, $clients);
+
+        return response()->download($path, 'clients-'.today()->toDateString().'.xlsx')->deleteFileAfterSend();
+    }
+
     public function store(Request $request, FacilityUserService $service): RedirectResponse
     {
         $data = $request->validate([
-            ...$this->personRules(),
-            // A removed facility user's email may be used again: they are re-registered on the same account
-            'email' => ['required', 'email', 'max:255', function (string $attribute, mixed $value, Closure $fail) {
-                // Emails are unique across all companies, so look beyond this one
-                $existing = User::acrossCompanies()->where('email', $value)->first();
-
-                if ($existing && $existing->company_id !== CurrentCompany::id()) {
-                    $fail('This email is already registered with another organisation on PayXbills. Use a different email.');
-                } elseif ($existing && ! FacilityUserService::canRejoin($existing)) {
-                    $fail($existing->isFacilityUser()
-                        ? "{$existing->name} already holds a space. Remove them first, or edit them to move them to another space."
-                        : 'This email belongs to a staff account.');
-                }
-            }],
-            'space_id' => ['required', CompanyRules::exists('spaces')],
-            'category_id' => ['required', CompanyRules::exists('categories')->where('is_active', true)],
-            'start_date' => ['required', 'date'],
+            ...FacilityUserService::rules(),
+            'email' => [...FacilityUserService::rules()['email'], $this->emailRule()],
         ]);
 
-        $returning = User::acrossCompanies()->where('email', $data['email'])->exists();
+        $returning = filled($data['email'] ?? null) && User::acrossCompanies()->where('email', $data['email'])->exists();
 
         try {
             $occupancy = $service->register($data, $request->user());
@@ -135,9 +199,10 @@ class FacilityUserController extends Controller
             return back()->withErrors(['space_id' => $e->getMessage()]);
         }
 
-        $done = $returning ? 're-registered (returning facility user, earlier history kept)' : 'registered';
+        $done = $returning ? 're-registered (returning client, earlier history kept)' : 'registered';
+        $login = $occupancy->user->email ? " Login details were emailed to {$occupancy->user->email}." : '';
 
-        return back()->with('success', "{$occupancy->user->name} {$done} in {$occupancy->space->name()}. Login details were emailed to {$occupancy->user->email}.");
+        return back()->with('success', "{$occupancy->user->name} {$done} ({$occupancy->code}).{$login}");
     }
 
     public function update(Request $request, Occupancy $occupancy, FacilityUserService $service): RedirectResponse
@@ -149,19 +214,96 @@ class FacilityUserController extends Controller
         }
 
         $data = $request->validate([
-            ...$this->personRules(),
-            'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($occupancy->user_id)],
-            'space_id' => ['required', CompanyRules::exists('spaces')],
-            'category_id' => ['required', CompanyRules::exists('categories')],
+            ...FacilityUserService::rules(),
+            'email' => [...FacilityUserService::rules()['email'], $this->emailRule($occupancy->user_id)],
         ]);
 
         try {
-            $service->update($occupancy, $data, $request->user());
+            $change = $service->requestChange($occupancy, $data, $request->user());
         } catch (InvalidArgumentException $e) {
             return back()->withErrors(['space_id' => $e->getMessage()]);
         }
 
-        return back()->with('success', "{$data['name']} updated.");
+        return back()->with('success', $change
+            ? "Changes to {$occupancy->user->name} sent to the admin. They take effect once approved."
+            : "{$occupancy->user->name} updated.");
+    }
+
+    public function activate(Request $request, Occupancy $occupancy, FacilityUserService $service): RedirectResponse
+    {
+        try {
+            $service->activate($occupancy, $request->user());
+        } catch (InvalidArgumentException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', "{$occupancy->user->name} activated. Billing has started and their pay link has been sent.");
+    }
+
+    public function deactivate(Request $request, Occupancy $occupancy, FacilityUserService $service): RedirectResponse
+    {
+        try {
+            $service->deactivate($occupancy);
+        } catch (InvalidArgumentException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', "{$occupancy->user->name} deactivated. They will not be billed until activated again.");
+    }
+
+    public function approveChange(Request $request, ClientChangeRequest $change, FacilityUserService $service): RedirectResponse
+    {
+        $note = $request->validate(['note' => ['nullable', 'string', 'max:255']])['note'] ?? null;
+
+        try {
+            $service->approveChange($change, $request->user(), $note);
+        } catch (InvalidArgumentException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', "Changes to {$change->occupancy->user->name} approved and applied.");
+    }
+
+    public function rejectChange(Request $request, ClientChangeRequest $change, FacilityUserService $service): RedirectResponse
+    {
+        $note = $request->validate(['note' => ['nullable', 'string', 'max:255']])['note'] ?? null;
+
+        try {
+            $service->rejectChange($change, $request->user(), $note);
+        } catch (InvalidArgumentException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', "Changes to {$change->occupancy->user->name} rejected. Nothing was changed.");
+    }
+
+    /**
+     * Find facility users by any detail: name, contacts, account, address, facility and space,
+     * category (name or amount), bin type, number of bins or frequency.
+     */
+    protected function search(Builder $query, string $s): void
+    {
+        $like = "%{$s}%";
+        $named = fn (string $relation, string $column = 'name') => fn (Builder $w) => $w->orWhereHas($relation, fn (Builder $r) => $r->where($column, 'like', $like));
+
+        $query->where(function (Builder $w) use ($like, $s, $named) {
+            $w->where('code', 'like', $like)
+                ->orWhereHas('user', fn (Builder $u) => $u->where('name', 'like', $like)->orWhere('email', 'like', $like)->orWhere('phone', 'like', $like))
+                ->orWhere('house_no', 'like', $like)
+                ->orWhere('street', 'like', $like)
+                ->orWhere('district', 'like', $like)
+                ->orWhereHas('space', fn (Builder $sp) => $sp->where('number', 'like', $like)->orWhere('label', 'like', $like));
+
+            foreach ([['facility'], ['category'], ['binType']] as [$relation]) {
+                $named($relation)($w);
+            }
+
+            // "3" finds 3 bins or 3 times a week; "15000" finds everyone whose category costs that
+            if (is_numeric($s)) {
+                $w->orWhere('bins', (int) $s)->orWhere('frequency', (int) $s)
+                    ->orWhereHas('category', fn (Builder $c) => $c->where('monthly_amount', (float) $s));
+            }
+        });
     }
 
     public function resendLogin(Request $request, Occupancy $occupancy, FacilityUserService $service): RedirectResponse
@@ -172,7 +314,11 @@ class FacilityUserController extends Controller
             return back()->with('error', 'This facility user has been removed.');
         }
 
-        $service->resendLogin($occupancy->user);
+        try {
+            $service->resendLogin($occupancy->user);
+        } catch (InvalidArgumentException $e) {
+            return back()->with('error', $e->getMessage());
+        }
 
         return back()->with('success', "New login details emailed to {$occupancy->user->email}.");
     }
@@ -200,7 +346,7 @@ class FacilityUserController extends Controller
         }
 
         return back()->with('success', $removal->status === 'approved'
-            ? "{$occupancy->user->name} removed. {$occupancy->space->name()} is now vacant."
+            ? "{$occupancy->user->name} removed.".($occupancy->space ? " {$occupancy->space->name()} is now vacant." : '')
             : 'Removal requested. Your company admin must approve it.');
     }
 
@@ -227,12 +373,13 @@ class FacilityUserController extends Controller
         return back()->with('success', "{$removal->occupancy->user->name} {$outcome}.");
     }
 
-    protected function personRules(): array
+    protected function emailRule(?int $userId = null): Closure
     {
-        return [
-            'name' => ['required', 'string', 'max:255'],
-            'phone' => ['nullable', 'string', 'max:30', 'regex:/^\+?[0-9 ()-]{7,20}$/'],
-        ];
+        return function (string $attribute, mixed $value, Closure $fail) use ($userId) {
+            if ($problem = FacilityUserService::emailProblem($value, $userId)) {
+                $fail($problem);
+            }
+        };
     }
 
     /**

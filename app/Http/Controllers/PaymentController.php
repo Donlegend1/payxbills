@@ -9,6 +9,7 @@ use App\Services\BillingService;
 use App\Services\Messenger;
 use App\Services\Metrics;
 use App\Services\PaymentProof;
+use App\Support\StoredFile;
 use App\Tenancy\CompanyRules;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
@@ -53,7 +54,7 @@ class PaymentController extends Controller
                 'id' => $p->id,
                 'date' => $p->paid_on->format('j M Y'),
                 'client' => $p->occupancy->user->name,
-                'place' => $p->occupancy->facility->name.' · '.$p->occupancy->space->name(),
+                'place' => $p->occupancy->placeName(),
                 'amount' => (float) $p->amount,
                 'months' => $p->months,
                 'method' => Payment::METHODS[$p->method],
@@ -86,8 +87,8 @@ class PaymentController extends Controller
                     ->sortBy(fn (Occupancy $o) => $o->user->name)
                     ->map(fn (Occupancy $o) => [
                         'id' => $o->id,
-                        'name' => "{$o->user->name} – {$o->facility->name}, {$o->space->name()}",
-                        'monthly' => (float) $o->category->monthly_amount,
+                        'name' => "{$o->user->name} – {$o->placeName()}",
+                        'monthly' => $o->monthlyAmount(),
                         'outstanding' => round((float) $o->open_amount - (float) $o->open_paid, 2),
                     ])
                     ->values()
@@ -184,7 +185,7 @@ class PaymentController extends Controller
     }
 
     /**
-     * Download proof of payment: staff who can see the payment, or the facility user it belongs to.
+     * View or download proof of payment: staff who can see the payment, or the facility user it belongs to.
      */
     public function attachment(Request $request, PaymentAttachment $attachment): StreamedResponse
     {
@@ -192,7 +193,8 @@ class PaymentController extends Controller
         abort_unless($user->can('view-payments') || $user->can('use-portal'), 403);
         $this->authorizeVisible($request, $attachment->payment);
 
-        return Storage::disk(PaymentAttachment::DISK)->download($attachment->path, $attachment->original_name);
+        // Opens in the browser; ?download=1 saves it instead
+        return StoredFile::respond($request, PaymentAttachment::DISK, $attachment->path, $attachment->original_name);
     }
 
     protected function authorizeVisible(Request $request, Payment $payment): void

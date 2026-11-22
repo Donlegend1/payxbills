@@ -61,7 +61,7 @@ class FacilityController extends Controller
                     'id' => $s->currentOccupancy->id,
                     'name' => $s->currentOccupancy->user->name,
                     'code' => $s->currentOccupancy->code,
-                    'category' => $s->currentOccupancy->category->name,
+                    'category' => $s->currentOccupancy->categoryName(),
                 ] : null,
             ]);
 

@@ -27,10 +27,12 @@ class AppServiceProvider extends ServiceProvider
     {
         Vite::prefetch(concurrency: 3);
 
-        // Company abilities come from the user's role. Platform admins hold none of them:
-        // they work in the platform area and see company data only by logging in as a company user.
+        // Company abilities come from the user's role. The super admin holds all of them (except the
+        // facility user portal) inside a company they opened from the platform area.
         foreach (array_keys(Role::ABILITIES) as $ability) {
-            Gate::define($ability, fn (User $user) => ! $user->isPlatformAdmin() && $user->role->can($ability));
+            Gate::define($ability, fn (User $user) => $user->isPlatformAdmin()
+                ? $ability !== 'use-portal' && CurrentCompany::id() !== null
+                : $user->role->can($ability));
         }
 
         Gate::define('manage-companies', fn (User $user) => $user->isPlatformAdmin());

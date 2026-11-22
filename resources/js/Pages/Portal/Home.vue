@@ -42,7 +42,7 @@ const submitManual = () => manual.post(route('portal.payments.store'), { forceFo
         <Head title="My account" />
 
         <template v-if="account">
-            <PageHeader :title="`Hello ${account.name}`" :sub="`${account.space}, ${account.facility.name} · Account ${account.code}`">
+            <PageHeader :title="`Hello ${account.name}`" :sub="`${account.space} · Account ${account.code}`">
                 <button class="chip" @click="openManual">I paid by transfer</button>
             </PageHeader>
 
@@ -56,11 +56,12 @@ const submitManual = () => manual.post(route('portal.payments.store'), { forceFo
                 <div class="card">
                     <h2>Your facility</h2>
                     <dl class="kv">
-                        <dt>Facility</dt><dd>{{ account.facility.name }}</dd>
+                        <dt v-if="account.facility.name">Facility</dt><dd v-if="account.facility.name">{{ account.facility.name }}</dd>
                         <dt v-if="account.facility.address">Address</dt><dd v-if="account.facility.address">{{ account.facility.address }}</dd>
                         <dt v-if="account.facility.phone">Phone</dt><dd v-if="account.facility.phone">{{ account.facility.phone }}</dd>
-                        <dt>Room / space</dt><dd>{{ account.space }}</dd>
-                        <dt>Category</dt><dd>{{ account.category }} – {{ N(account.monthly) }} a month</dd>
+                        <dt>Place</dt><dd>{{ account.space }}</dd>
+                        <dt v-if="account.service">Service</dt><dd v-if="account.service">{{ account.service }}</dd>
+                        <dt>Monthly amount</dt><dd><template v-if="account.category">{{ account.category }} – </template>{{ N(account.monthly) }}</dd>
                     </dl>
                     <template v-if="bankDetails">
                         <h2 style="margin-top: 14px">Bank transfer</h2>

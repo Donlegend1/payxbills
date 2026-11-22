@@ -78,10 +78,12 @@ class Metrics
      */
     public function expected(): float
     {
+        // Facility users pay their category's amount
         return (float) DB::table('occupancies')
             ->join('categories', 'categories.id', '=', 'occupancies.category_id')
             ->where('occupancies.company_id', CurrentCompany::id())
             ->where('occupancies.status', 'active')
+            ->where('occupancies.billing_active', true)
             ->sum('categories.monthly_amount');
     }
 
@@ -92,7 +94,7 @@ class Metrics
     {
         return $this->open ??= Invoice::open()
             ->whereDate('due_date', '<=', today()->addDays(31))
-            ->with(['occupancy:id,code,user_id,facility_id,space_id', 'occupancy.user:id,name', 'occupancy.facility:id,name', 'occupancy.space:id,number,label'])
+            ->with(['occupancy:id,code,user_id,facility_id,space_id,house_no,street,district', 'occupancy.user:id,name', 'occupancy.facility:id,name', 'occupancy.space:id,number,label'])
             ->get();
     }
 
@@ -158,7 +160,7 @@ class Metrics
                 return [
                     'occupancy_id' => $occupancy->id,
                     'name' => $occupancy->user->name,
-                    'place' => $occupancy->facility->name.' · '.$occupancy->space->name(),
+                    'place' => $occupancy->placeName(),
                     'bands' => array_map(fn ($v) => round($v, 2), $bands),
                     'total' => round(array_sum($bands), 2),
                     'days_overdue' => $invoices->max(fn (Invoice $i) => $i->daysOverdue()),

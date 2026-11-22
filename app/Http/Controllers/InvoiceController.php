@@ -29,7 +29,7 @@ class InvoiceController extends Controller
         $month = today()->startOfMonth();
 
         $invoices = Invoice::query()
-            ->with(['occupancy:id,code,user_id,facility_id,space_id', 'occupancy.user:id,name', 'occupancy.facility:id,name', 'occupancy.space:id,number,label'])
+            ->with(['occupancy:id,code,user_id,facility_id,space_id,house_no,street,district', 'occupancy.user:id,name', 'occupancy.facility:id,name', 'occupancy.space:id,number,label'])
             ->when($filters['status'] ?? null, function (Builder $q, string $status) {
                 match ($status) {
                     'overdue' => $q->overdue(),
@@ -51,7 +51,7 @@ class InvoiceController extends Controller
                 'id' => $i->id,
                 'number' => $i->number,
                 'client' => $i->occupancy->user->name,
-                'place' => $i->occupancy->facility->name.' · '.$i->occupancy->space->name(),
+                'place' => $i->occupancy->placeName(),
                 'month' => $i->periodLabel(),
                 'amount' => (float) $i->amount,
                 'paid' => (float) $i->amount_paid,
@@ -160,10 +160,10 @@ class InvoiceController extends Controller
                 'code' => $occupancy->code,
                 'email' => $occupancy->user->email,
                 'phone' => $occupancy->user->phone,
-                'facility' => $occupancy->facility->name,
-                'address' => $occupancy->facility->address,
-                'space' => $occupancy->space->name(),
-                'category' => $occupancy->category->name,
+                'facility' => $occupancy->facility?->name,
+                'address' => $occupancy->facility?->address ?? $occupancy->address(),
+                'space' => $occupancy->placeName(),
+                'category' => $occupancy->categoryName(),
             ],
             'company' => [
                 'name' => Setting::get('company_name'),

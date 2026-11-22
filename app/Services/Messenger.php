@@ -33,7 +33,7 @@ class Messenger
     public function welcome(User $user, string $password, ?Occupancy $occupancy = null): MessageLog
     {
         $company = Setting::get('company_name');
-        $place = $occupancy ? "\n\nFacility: {$occupancy->facility->name}\nSpace: {$occupancy->space->name()}\nCategory: {$occupancy->category->name} (".Money::format($occupancy->category->monthly_amount).' per month)' : '';
+        $place = $occupancy ? "\n\nAccount: {$occupancy->code}\nPlace: {$occupancy->placeName()}\nMonthly amount: ".Money::format($occupancy->monthlyAmount()) : '';
         $body = "Dear {$user->name},\n\nAn account has been created for you on the {$company} payment portal.{$place}\n\nLog in here: ".route('login')."\nEmail: {$user->email}\nPassword: %s\n\nYou will be asked to choose your own password when you first log in.\n\n{$company}";
         $subject = FacilityUserWelcome::subject();
 
@@ -59,6 +59,30 @@ class Messenger
     }
 
     /**
+     * Sent when billing starts: what they will be billed and the pay link. No password: facility users
+     * pay from the link and only log in if they want to, after setting a password with "Forgot password".
+     */
+    public function activated(Occupancy $occupancy): Collection
+    {
+        $occupancy->loadMissing(['user', 'facility', 'space', 'category']);
+        $user = $occupancy->user;
+        $company = Setting::get('company_name');
+        $amount = Money::format($occupancy->monthlyAmount());
+        $url = $occupancy->payUrl();
+        $history = $user->email
+            ? "\n\nTo see all your payments and receipts online, go to ".route('password.request')." and enter {$user->email} to set a password."
+            : '';
+
+        return $this->send(
+            $user,
+            'activation',
+            "Welcome to {$company}",
+            "Dear {$user->name},\n\nYou have been added to {$company}'s billing (account {$occupancy->code}, {$occupancy->placeName()}). Your monthly amount is {$amount}.\n\nEach month you will receive your bill with a link to pay online. You can also pay any time here:\n{$url}{$history}\n\nThank you,\n{$company}",
+            "{$company}: welcome! Account {$occupancy->code}, {$amount}/month. You will get your bill and pay link monthly. Pay any time: {$url}",
+        );
+    }
+
+    /**
      * "Payment due" notice with the pay link, sent when a month's invoice is issued.
      */
     public function invoiceIssued(Invoice $invoice): Collection
@@ -74,9 +98,9 @@ class Messenger
         $logs = $this->send(
             $user,
             'invoice',
-            "{$month} payment due – {$occupancy->facility->name}",
-            "Dear {$user->name},\n\nYour {$month} payment of {$amount} for {$occupancy->space->name()} at {$occupancy->facility->name} is due on {$due} (invoice {$invoice->number}).\n\nPay online here – you can pay for as many months as you like:\n{$url}\n\nThank you,\n{$company}",
-            "{$company}: {$month} payment of {$amount} for {$occupancy->space->name()}, {$occupancy->facility->name} is due {$due}. Pay: {$url}",
+            "{$month} payment due – {$company}",
+            "Dear {$user->name},\n\nYour {$month} payment of {$amount} for {$occupancy->placeName()} is due on {$due} (invoice {$invoice->number}).\n\nPay online here – you can pay for as many months as you like:\n{$url}\n\nThank you,\n{$company}",
+            "{$company}: {$month} payment of {$amount} for {$occupancy->placeName()} is due {$due}. Pay: {$url}",
             invoice: $invoice,
         );
 
@@ -100,8 +124,8 @@ class Messenger
             $user,
             'reminder',
             "Reminder: {$month} payment {$late}",
-            "Dear {$user->name},\n\nYour {$month} payment of {$balance} for {$occupancy->space->name()} at {$occupancy->facility->name} {$late}.\n\nPay here:\n{$url}\n\nIf you have already paid, please ignore this message.\n\n{$company}",
-            "{$company}: {$month} payment of {$balance} for {$occupancy->space->name()} {$late}. Pay: {$url}",
+            "Dear {$user->name},\n\nYour {$month} payment of {$balance} for {$occupancy->placeName()} {$late}.\n\nPay here:\n{$url}\n\nIf you have already paid, please ignore this message.\n\n{$company}",
+            "{$company}: {$month} payment of {$balance} for {$occupancy->placeName()} {$late}. Pay: {$url}",
             invoice: $invoice,
         );
     }
@@ -128,8 +152,8 @@ class Messenger
             $user,
             'reminder',
             "Payment reminder from {$company}",
-            "Dear {$user->name},\n\nYou have {$total} outstanding for {$occupancy->space->name()} at {$occupancy->facility->name} ({$months}).\n\nPay here:\n{$url}\n\nIf you have already paid, please ignore this message.\n\n{$company}",
-            "{$company}: you have {$total} outstanding for {$occupancy->space->name()}, {$occupancy->facility->name}. Pay: {$url}",
+            "Dear {$user->name},\n\nYou have {$total} outstanding for {$occupancy->placeName()} ({$months}).\n\nPay here:\n{$url}\n\nIf you have already paid, please ignore this message.\n\n{$company}",
+            "{$company}: you have {$total} outstanding for {$occupancy->placeName()}. Pay: {$url}",
             invoice: $open->first(),
         );
     }
@@ -147,14 +171,14 @@ class Messenger
         $amount = Money::format($payment->amount);
         $months = $payment->allocations->map(fn ($a) => $a->invoice->periodLabel())->unique()->join(', ', ' and ') ?: 'credit on account';
         $url = $payment->receiptUrl();
-        $facilityLines = collect([$facility->name, $facility->address, $facility->phone ? 'Tel: '.$facility->phone : null, $facility->email])->filter()->join("\n");
+        $facilityLines = collect([$facility?->name, $facility?->address, $facility?->phone ? 'Tel: '.$facility->phone : null, $facility?->email])->filter()->join("\n");
 
         return $this->send(
             $user,
             'receipt',
             "Receipt {$payment->receipt_number} for {$amount}",
-            "Dear {$user->name},\n\nWe have received your payment of {$amount} on {$payment->paid_on->format('j M Y')}.\n\nReceipt number: {$payment->receipt_number}\nAccount: {$occupancy->code}\nSpace: {$occupancy->space->name()}\nCategory: {$occupancy->category->name}\nMonths covered: {$months}\n\n{$facilityLines}\n\nView or print your receipt:\n{$url}\n\nThank you,\n{$company}",
-            "{$company}: payment of {$amount} received for {$occupancy->space->name()}, {$facility->name} ({$months}). Receipt {$payment->receipt_number}: {$url}",
+            "Dear {$user->name},\n\nWe have received your payment of {$amount} on {$payment->paid_on->format('j M Y')}.\n\nReceipt number: {$payment->receipt_number}\nAccount: {$occupancy->code}\nPlace: {$occupancy->placeName()}\nCategory: {$occupancy->categoryName()}\nMonths covered: {$months}\n\n{$facilityLines}\n\nView or print your receipt:\n{$url}\n\nThank you,\n{$company}",
+            "{$company}: payment of {$amount} received for {$occupancy->placeName()} ({$months}). Receipt {$payment->receipt_number}: {$url}",
             payment: $payment,
         );
     }

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\ClientListController;
 use App\Http\Controllers\CompanyLogoController;
 use App\Http\Controllers\CompanyRegistrationController;
 use App\Http\Controllers\ContactController;
@@ -33,6 +34,8 @@ Route::get('/features', fn () => Inertia::render('Public/Services'))->name('serv
 Route::redirect('/services', '/features', 301);
 Route::get('/about', fn () => Inertia::render('Public/About'))->name('about');
 Route::get('/contact', [ContactController::class, 'create'])->name('contact');
+// Help for companies, their staff and facility users; inside the app when logged in
+Route::get('/support', fn () => Inertia::render('Support'))->name('support');
 Route::post('/contact', [ContactController::class, 'store'])->middleware('throttle:5,1')->name('contact.store');
 
 // A company signs up and becomes a PayXbills client with its own admin login
@@ -67,9 +70,16 @@ Route::middleware(['auth', 'usable'])->group(function () {
     // Return to the admin account after impersonating (open to the impersonated user)
     Route::post('/impersonate/leave', [UserController::class, 'leaveImpersonation'])->name('impersonate.leave');
 
-    // Fivestar Technologies: every company on PayXbills
+    // Super admin (Fivestar Technologies): oversees every company on PayXbills
     Route::middleware('can:manage-companies')->prefix('platform')->name('platform.')->group(function () {
         Route::get('/companies', [PlatformController::class, 'index'])->name('companies');
+        Route::get('/facility-users', [PlatformController::class, 'facilityUsers'])->name('facility-users');
+        Route::get('/payments', [PlatformController::class, 'payments'])->name('payments');
+        Route::get('/invoices', [PlatformController::class, 'invoices'])->name('invoices');
+        Route::get('/facilities', [PlatformController::class, 'facilities'])->name('facilities');
+        Route::get('/categories', [PlatformController::class, 'categories'])->name('categories');
+        Route::post('/companies/{company}/open', [PlatformController::class, 'open'])->name('companies.open');
+        Route::post('/close', [PlatformController::class, 'close'])->name('close');
         Route::put('/companies/{company}', [PlatformController::class, 'update'])->name('companies.update');
         Route::post('/companies/{company}/impersonate', [PlatformController::class, 'impersonate'])->name('companies.impersonate');
     });
@@ -101,14 +111,25 @@ Route::middleware(['auth', 'usable', 'company'])->group(function () {
         Route::get('/categories', [CategoryController::class, 'index'])->name('categories');
         Route::post('/categories', [CategoryController::class, 'store'])->name('categories.store');
         Route::put('/categories/{category}', [CategoryController::class, 'update'])->name('categories.update');
+        Route::put('/lists/{list}/{id}', [ClientListController::class, 'update'])->whereNumber('id')->name('lists.update');
     });
 
     Route::get('/facility-users', [FacilityUserController::class, 'index'])->can('view-facility-users')->name('facility-users');
+    Route::middleware('can:register-facility-users')->group(function () {
+        Route::post('/facility-users/import', [FacilityUserController::class, 'import'])->name('facility-users.import');
+        Route::get('/facility-users/template', [FacilityUserController::class, 'template'])->name('facility-users.template');
+        Route::get('/facility-users/export', [FacilityUserController::class, 'export'])->name('facility-users.export');
+    });
     Route::post('/facility-users', [FacilityUserController::class, 'store'])->can('register-facility-users')->name('facility-users.store');
     Route::put('/facility-users/{occupancy}', [FacilityUserController::class, 'update'])->can('register-facility-users')->name('facility-users.update');
     Route::post('/facility-users/{occupancy}/resend-login', [FacilityUserController::class, 'resendLogin'])->can('register-facility-users')->name('facility-users.resend-login');
     Route::post('/facility-users/{occupancy}/remind', [FacilityUserController::class, 'remind'])->can('send-reminders')->name('facility-users.remind');
     Route::post('/facility-users/{occupancy}/removal', [FacilityUserController::class, 'requestRemoval'])->can('request-removals')->name('facility-users.removal');
+    Route::post('/lists/{list}', [ClientListController::class, 'store'])->can('add-list-items')->name('lists.store');
+    Route::post('/facility-users/{occupancy}/activate', [FacilityUserController::class, 'activate'])->can('activate-billing')->name('facility-users.activate');
+    Route::post('/facility-users/{occupancy}/deactivate', [FacilityUserController::class, 'deactivate'])->can('activate-billing')->name('facility-users.deactivate');
+    Route::post('/changes/{change}/approve', [FacilityUserController::class, 'approveChange'])->can('approve-changes')->name('changes.approve');
+    Route::post('/changes/{change}/reject', [FacilityUserController::class, 'rejectChange'])->can('approve-changes')->name('changes.reject');
     Route::post('/removals/{removal}/approve', [FacilityUserController::class, 'approveRemoval'])->can('approve-removals')->name('removals.approve');
     Route::post('/removals/{removal}/reject', [FacilityUserController::class, 'rejectRemoval'])->can('approve-removals')->name('removals.reject');
 
@@ -128,6 +149,8 @@ Route::middleware(['auth', 'usable', 'company'])->group(function () {
 
     Route::get('/expenditure', [ExpenseController::class, 'index'])->can('view-expenditure')->name('expenditure');
     Route::post('/expenditure', [ExpenseController::class, 'store'])->can('create-memos')->name('expenditure.store');
+    Route::post('/expenditure/{expense}/review', [ExpenseController::class, 'review'])->can('approve-memos')->name('expenditure.review');
+    Route::get('/expenditure/{expense}/memo', [ExpenseController::class, 'memo'])->can('view-expenditure')->name('expenditure.memo');
     Route::post('/expenditure/{expense}/approve', [ExpenseController::class, 'approve'])->can('approve-memos')->name('expenditure.approve');
     Route::post('/expenditure/{expense}/reject', [ExpenseController::class, 'reject'])->can('approve-memos')->name('expenditure.reject');
 

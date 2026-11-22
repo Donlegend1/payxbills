@@ -54,7 +54,7 @@ Artisan::command('billing:send-reminders {--company= : Company id or slug}', fun
 
         Invoice::open()
             ->whereDate('due_date', '<=', today())
-            ->whereHas('occupancy', fn ($q) => $q->active())
+            ->whereHas('occupancy', fn ($q) => $q->billing())
             ->with('occupancy')
             ->each(function (Invoice $invoice) use ($days, $messenger, &$sent) {
                 $alreadyToday = MessageLog::where('invoice_id', $invoice->id)->where('type', 'reminder')->whereDate('created_at', today())->exists();
@@ -78,7 +78,7 @@ Artisan::command('messages:retry-failed {--company= : Company id or slug}', func
     });
 })->purpose('Retry emails and texts that have not gone out yet');
 
-Artisan::command('platform:admin {email} {--name=PayXbills Platform Admin}', function (string $email) {
+Artisan::command('platform:admin {email} {--name=PayXbills Super Admin}', function (string $email) {
     $user = User::acrossCompanies()->firstOrNew(['email' => $email]);
 
     if ($user->exists && $user->company_id) {
@@ -105,8 +105,8 @@ Artisan::command('platform:admin {email} {--name=PayXbills Platform Admin}', fun
         'email_verified_at' => now(),
     ])->save();
 
-    $this->info("{$email} can now log in to the PayXbills platform area.");
-})->purpose('Create or update a Fivestar Technologies login for the PayXbills platform area');
+    $this->info("{$email} can now log in as PayXbills super admin.");
+})->purpose('Create or update a PayXbills super admin login (Fivestar Technologies), who oversees every company');
 
 Schedule::command('billing:generate-invoices')->dailyAt('07:00');
 Schedule::command('billing:send-reminders')->dailyAt('08:00');

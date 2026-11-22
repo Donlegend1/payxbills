@@ -43,9 +43,9 @@ class FacilityUserWelcome extends Notification
             ->line("An account has been created for you on the {$company} payment portal. You can use it to see your dues, pay online and download receipts.");
 
         if ($o = $this->occupancy) {
-            $mail->line("**Facility:** {$o->facility->name}  ")
-                ->line("**Space:** {$o->space->name()}  ")
-                ->line("**Category:** {$o->category->name} (".Money::format($o->category->monthly_amount).' per month)');
+            $mail->line("**Account:** {$o->code}  ")
+                ->line("**Place:** {$o->placeName()}  ")
+                ->line('**Monthly amount:** '.Money::format($o->monthlyAmount()));
         }
 
         return $mail

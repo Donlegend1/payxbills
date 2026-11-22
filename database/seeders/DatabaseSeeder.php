@@ -36,7 +36,7 @@ class DatabaseSeeder extends Seeder
     }
 
     /**
-     * Fivestar Technologies' own login for the platform area (no company).
+     * Fivestar Technologies' super admin: oversees every company (belongs to none).
      * Set PLATFORM_ADMIN_PASSWORD before seeding a real server.
      */
     protected function platformAdmin(): void
@@ -44,7 +44,7 @@ class DatabaseSeeder extends Seeder
         $user = User::acrossCompanies()->firstOrNew(['email' => 'platform@payxbills.com']);
 
         $user->forceFill([
-            'name' => 'PayXbills Platform Admin',
+            'name' => 'PayXbills Super Admin',
             'role' => Role::Admin,
             'company_id' => null,
             'is_platform_admin' => true,

@@ -34,6 +34,8 @@ class Setting extends Model
         'max_months' => 12,
         'sms_sender' => 'PAYXBILLS',
         'bank_details' => '',
+        // The company's WhatsApp number for facility users (pay page, receipts, portal)
+        'whatsapp_number' => '',
         'nrs_enabled' => false,
         'auto_invoicing' => true,
     ];

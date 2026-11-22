@@ -42,6 +42,7 @@ class SettingsController extends Controller
             'max_months' => ['required', 'integer', 'between:1,36'],
             'sms_sender' => ['required', 'string', 'max:11'],
             'bank_details' => ['nullable', 'string', 'max:500'],
+            'whatsapp_number' => ['nullable', 'string', 'max:20', 'regex:/^\+?[0-9 ()-]{7,20}$/'],
             'nrs_enabled' => ['boolean'],
             'auto_invoicing' => ['boolean'],
             // Blank keeps the saved key; "remove" goes back to the platform account

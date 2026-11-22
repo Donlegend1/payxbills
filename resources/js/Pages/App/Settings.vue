@@ -102,6 +102,7 @@ const fields = [
             <button v-if="paystack.own" class="chip" style="margin-top: 8px" :disabled="form.processing" @click="removeKey">Remove our key</button>
             <div class="form" style="margin-top: 10px">
                 <label>SMS sender name (max 11)<input v-model="form.sms_sender" maxlength="11" /><InputError :message="form.errors.sms_sender" /></label>
+                <label>WhatsApp number for facility users<input v-model="form.whatsapp_number" type="tel" placeholder="e.g. 0803 123 4567" /><InputError :message="form.errors.whatsapp_number" /></label>
             </div>
             <label class="field" style="margin-top: 10px">Bank details for transfers (shown on invoices and the pay page)
                 <textarea v-model="form.bank_details" rows="3" placeholder="Bank name, account name and account number"></textarea>

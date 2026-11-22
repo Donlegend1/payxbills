@@ -59,9 +59,9 @@ class ReceiptController extends Controller
                     'phone' => $occupancy->user->phone,
                     'account' => $occupancy->code,
                 ],
-                'facility' => $occupancy->facility->only('name', 'address', 'phone', 'email'),
-                'space' => $occupancy->space->name(),
-                'category' => $occupancy->category->name,
+                'facility' => $occupancy->facilityDetails(),
+                'space' => $occupancy->placeName(),
+                'category' => $occupancy->categoryName(),
                 'paid_through' => $occupancy->paidThrough()?->format('F Y'),
                 // Business name and logo of the company that was paid
                 'company' => $payment->company->brand(),

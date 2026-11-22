@@ -2,6 +2,7 @@
 import { Head, Link, useForm } from '@inertiajs/vue3';
 import AuthLayout from '@/Layouts/AuthLayout.vue';
 import InputError from '@/Components/InputError.vue';
+import PasswordInput from '@/Components/PasswordInput.vue';
 
 const form = useForm({
     company_name: '',
@@ -48,11 +49,11 @@ const submit = () => form.post(route('register.store'), { onFinish: () => form.r
                 <InputError :message="form.errors.email" />
             </label>
             <label class="field">Password
-                <input v-model="form.password" type="password" required autocomplete="new-password" />
+                <PasswordInput v-model="form.password" required autocomplete="new-password" />
                 <InputError :message="form.errors.password" />
             </label>
             <label class="field">Confirm password
-                <input v-model="form.password_confirmation" type="password" required autocomplete="new-password" />
+                <PasswordInput v-model="form.password_confirmation" required autocomplete="new-password" />
             </label>
 
             <button class="btn block" :disabled="form.processing">{{ form.processing ? 'Creating your workspace…' : 'Create company account' }}</button>

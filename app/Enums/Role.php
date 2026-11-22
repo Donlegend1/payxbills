@@ -19,10 +19,16 @@ enum Role: string
         'view-facilities' => ['admin', 'management', 'accountant', 'supervisor'],
         'manage-facilities' => ['admin'],
         'manage-categories' => ['admin'],
+        // Add bin types and facility types (also from the facility user form)
+        'add-list-items' => ['admin', 'supervisor'],
         'view-facility-users' => ['admin', 'management', 'accountant', 'supervisor'],
         'register-facility-users' => ['admin', 'supervisor'],
         'request-removals' => ['admin', 'supervisor'],
         'approve-removals' => ['admin'],
+        // Edits to a facility user by other staff only take effect once the admin approves them
+        'approve-changes' => ['admin'],
+        // Start and stop billing a facility user
+        'activate-billing' => ['admin'],
         'view-invoices' => ['admin', 'management', 'accountant'],
         'manage-invoices' => ['admin', 'accountant'],
         'send-reminders' => ['admin', 'management', 'accountant', 'supervisor'],
@@ -73,6 +79,16 @@ enum Role: string
     public function isStaff(): bool
     {
         return $this !== self::FacilityUser;
+    }
+
+    /**
+     * Everything the super admin may do inside a company they opened.
+     *
+     * @return list<string>
+     */
+    public static function superAdminAbilities(): array
+    {
+        return array_values(array_diff(array_keys(self::ABILITIES), ['use-portal']));
     }
 
     /**

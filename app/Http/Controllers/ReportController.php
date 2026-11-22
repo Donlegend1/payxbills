@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Expense;
+use App\Models\ExpenseLine;
 use App\Models\Invoice;
 use App\Models\Occupancy;
 use App\Models\Payment;
@@ -21,7 +21,7 @@ class ReportController extends Controller
         'aged-receivables' => ['Aged receivables', 'Who owes, how much and for how long (as of today)'],
         'payments' => ['Payments register', 'All payments with method, source and who cleared them'],
         'statement' => ['Facility user statement', 'Invoices and payments for one facility user'],
-        'expenditure' => ['Expenditure by facility', 'Approved memos grouped by facility and category'],
+        'expenditure' => ['Expenditure by facility', 'Approved amounts by facility and category (partially approved memos: approved categories only)'],
         'collection' => ['Collection performance', 'Billed against collected by month, facility and category'],
     ];
 
@@ -32,7 +32,7 @@ class ReportController extends Controller
             'months' => $metrics->monthOptions(),
             'occupancies' => Occupancy::with(['user:id,name', 'facility:id,name', 'space:id,number,label'])->get()
                 ->sortBy(fn (Occupancy $o) => $o->user->name)
-                ->map(fn (Occupancy $o) => ['id' => $o->id, 'name' => "{$o->user->name} – {$o->facility->name}, {$o->space->name()}".($o->isActive() ? '' : ' (removed)')])
+                ->map(fn (Occupancy $o) => ['id' => $o->id, 'name' => "{$o->user->name} – {$o->placeName()}".($o->isActive() ? '' : ' (removed)')])
                 ->values(),
             'summary' => $metrics->trend(today()->startOfMonth()),
         ]);
@@ -73,16 +73,16 @@ class ReportController extends Controller
     {
         $rows = Invoice::with(['occupancy.user:id,name', 'occupancy.facility:id,name', 'occupancy.space:id,number,label'])
             ->where('period', $month->format('Y-m'))->orderBy('number')->get()
-            ->map(fn (Invoice $i) => [$i->number, $i->occupancy->code, $i->occupancy->user->name, $i->occupancy->facility->name, $i->occupancy->space->name(), $i->period, $i->issue_date->toDateString(), $i->due_date->toDateString(), $i->amount, $i->amount_paid, $i->balance(), $i->displayStatus()]);
+            ->map(fn (Invoice $i) => [$i->number, $i->occupancy->code, $i->occupancy->user->name, $i->occupancy->facility?->name ?? '', $i->occupancy->placeName(), $i->period, $i->issue_date->toDateString(), $i->due_date->toDateString(), $i->amount, $i->amount_paid, $i->balance(), $i->displayStatus()]);
 
         return [['Invoice', 'Account', 'Facility user', 'Facility', 'Space', 'Month', 'Issued', 'Due', 'Amount', 'Paid', 'Balance', 'Status'], $rows];
     }
 
     protected function occupancy(): array
     {
-        $rows = Occupancy::active()->with(['user:id,name,email,phone', 'facility:id,name', 'space:id,number,label', 'category:id,name,monthly_amount'])->get()
-            ->sortBy(fn (Occupancy $o) => [$o->facility->name, $o->space->number])
-            ->map(fn (Occupancy $o) => [$o->facility->name, $o->space->name(), $o->code, $o->user->name, $o->user->email, $o->user->phone, $o->category->name, $o->category->monthly_amount, $o->start_date->toDateString(), $o->paidThrough()?->format('Y-m') ?? '', $o->outstanding()]);
+        $rows = Occupancy::active()->with(['user:id,name,email,phone', 'facility:id,name', 'space:id,number,label', 'category:id,name,monthly_amount', 'binType:id,name'])->get()
+            ->sortBy(fn (Occupancy $o) => [$o->facility?->name ?? $o->district ?? '', $o->space?->number ?? $o->street ?? ''])
+            ->map(fn (Occupancy $o) => [$o->facility?->name ?? '', $o->placeName(), $o->code, $o->user->name, $o->user->email, $o->user->phone, $o->categoryName() ?? '', $o->monthlyAmount(), $o->start_date->toDateString(), $o->paidThrough()?->format('Y-m') ?? '', $o->outstanding()]);
 
         return [['Facility', 'Space', 'Account', 'Facility user', 'Email', 'Phone', 'Category', 'Monthly amount', 'Since', 'Paid up to', 'Outstanding'], $rows];
     }
@@ -99,7 +99,7 @@ class ReportController extends Controller
         $rows = Payment::with(['occupancy.user:id,name', 'occupancy.facility:id,name', 'recorder:id,name,role', 'reviewer:id,name'])
             ->where('status', '!=', 'pending')
             ->whereBetween('paid_on', $range)->orderBy('paid_on')->get()
-            ->map(fn (Payment $p) => [$p->paid_on->toDateString(), $p->receipt_number, $p->occupancy->code, $p->occupancy->user->name, $p->occupancy->facility->name, $p->amount, $p->months, Payment::METHODS[$p->method], $p->sourceLabel(), $p->reference ?? $p->gateway_reference, Payment::STATUSES[$p->status], $p->reviewer?->name]);
+            ->map(fn (Payment $p) => [$p->paid_on->toDateString(), $p->receipt_number, $p->occupancy->code, $p->occupancy->user->name, $p->occupancy->facility?->name ?? '', $p->amount, $p->months, Payment::METHODS[$p->method], $p->sourceLabel(), $p->reference ?? $p->gateway_reference, Payment::STATUSES[$p->status], $p->reviewer?->name]);
 
         return [['Date', 'Receipt', 'Account', 'Facility user', 'Facility', 'Amount', 'Months', 'Method', 'Recorded by', 'Reference', 'Status', 'Cleared by'], $rows];
     }
@@ -126,11 +126,13 @@ class ReportController extends Controller
 
     protected function expenditure(array $range): array
     {
-        $rows = Expense::with('facility:id,name')->approved()->whereBetween('spent_on', $range)->get()
-            ->sortBy(fn (Expense $e) => [$e->facility?->name ?? 'ZZZ', $e->category])
-            ->map(fn (Expense $e) => [$e->facility?->name ?? 'Not charged', $e->category, $e->memo_number, $e->spent_on->toDateString(), $e->description, $e->amount]);
+        // Only approved categories of approved or partially approved memos, at their approved amounts
+        $rows = ExpenseLine::recorded()->with('expense.facility:id,name')
+            ->whereHas('expense', fn ($q) => $q->whereBetween('spent_on', $range))->get()
+            ->sortBy(fn (ExpenseLine $l) => [$l->expense->facility?->name ?? 'ZZZ', $l->category])
+            ->map(fn (ExpenseLine $l) => [$l->expense->facility?->name ?? 'Not charged', $l->category, $l->expense->memo_number, $l->expense->spent_on->toDateString(), $l->expense->description, $l->expense->statusLabel(), $l->amount, $l->approved_amount]);
 
-        return [['Facility', 'Category', 'Memo', 'Date', 'Description', 'Amount'], $rows];
+        return [['Facility', 'Category', 'Memo', 'Date', 'Description', 'Status', 'Requested', 'Approved'], $rows];
     }
 
     protected function collection(Metrics $metrics, Carbon $month): array

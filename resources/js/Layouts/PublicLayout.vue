@@ -1,9 +1,13 @@
 <script setup>
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { Link, usePage } from '@inertiajs/vue3';
 import Logo from '@/Components/Logo.vue';
 import Icon from '@/Components/Icon.vue';
 import { platform } from '@/data/platform';
+import WhatsAppButton from '@/Components/WhatsAppButton.vue';
+
+// Pay pages and receipts pass the company's number ('' hides the button); elsewhere it is PayXbills support
+const props = defineProps({ whatsapp: { type: String, default: undefined }, whatsappMessage: { type: String, default: 'Hello PayXbills, I would like to know more.' } });
 
 const page = usePage();
 const open = ref(false);
@@ -11,9 +15,11 @@ const links = [
     ['home', 'Home'],
     ['services', 'Features'],
     ['about', 'About us'],
+    ['support', 'Support'],
     ['contact', 'Contact'],
 ];
 const year = new Date().getFullYear();
+const whatsappNumber = computed(() => (props.whatsapp === undefined ? page.props.platform.whatsapp : props.whatsapp));
 </script>
 
 <template>
@@ -35,6 +41,8 @@ const year = new Date().getFullYear();
     <main>
         <slot />
     </main>
+
+    <WhatsAppButton :number="whatsappNumber" :message="props.whatsappMessage" />
 
     <footer class="site-foot">
         <div class="wrap">

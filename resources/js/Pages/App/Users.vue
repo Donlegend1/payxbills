@@ -77,7 +77,8 @@ function impersonate(u) {
                     <label class="field">Phone<input v-model="userForm.phone" type="tel" /><InputError :message="userForm.errors.phone" /></label>
                 </div>
                 <label class="field">Role
-                    <select v-model="userForm.role"><option v-for="r in roles" :key="r.value" :value="r.value">{{ r.label }} — {{ r.description }}</option></select>
+                    <select v-model="userForm.role"><option v-for="r in roles" :key="r.value" :value="r.value">{{ r.label }}</option></select>
+                    <span class="sub small">{{ roles.find((r) => r.value === userForm.role)?.description }}</span>
                     <InputError :message="userForm.errors.role" />
                 </label>
                 <label class="field">{{ editingUser ? 'New password (leave blank to keep)' : 'Password' }}<input v-model="userForm.password" type="password" autocomplete="new-password" :required="!editingUser" /><InputError :message="userForm.errors.password" /></label>

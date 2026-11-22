@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BinType;
 use App\Models\Category;
 use App\Tenancy\CompanyRules;
 use Illuminate\Http\RedirectResponse;
@@ -16,7 +17,11 @@ class CategoryController extends Controller
 {
     public function index(): Response
     {
+        $list = fn (string $model) => $model::withCount(['occupancies as members' => fn ($q) => $q->active()])
+            ->orderBy('name')->get()->map(fn ($t) => [...$t->only('id', 'name', 'is_active'), 'members' => $t->members]);
+
         return Inertia::render('App/Categories', [
+            'binTypes' => $list(BinType::class),
             'categories' => Category::withCount(['occupancies as members' => fn ($q) => $q->active()])
                 ->orderBy('name')
                 ->get()
@@ -42,7 +47,9 @@ class CategoryController extends Controller
     {
         $category->update($this->validated($request, $category));
 
-        return back()->with('success', "Category {$category->name} updated. New amounts apply from the next month billed.");
+        $members = $category->occupancies()->active()->count();
+
+        return back()->with('success', "Category {$category->name} updated. {$members} facility user(s) in it pay the new amount from their next bill.");
     }
 
     protected function validated(Request $request, ?Category $category = null): array

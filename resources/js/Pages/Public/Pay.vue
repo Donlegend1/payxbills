@@ -13,7 +13,7 @@ const unpaid = computed(() => props.invoices.filter((i) => i.balance > 0).length
 </script>
 
 <template>
-    <PublicLayout>
+    <PublicLayout :whatsapp="$page.props.currentCompany?.whatsapp ?? ''" :whatsapp-message="`Hello ${company}, I need help with my account ${account.code}.`">
         <Head title="Pay your dues" />
 
         <section class="block" style="padding-top: 32px">
@@ -23,7 +23,7 @@ const unpaid = computed(() => props.invoices.filter((i) => i.balance > 0).length
                     <b style="font-size: 17px">{{ company }}</b>
                 </div>
                 <h1>Hello {{ account.name }}</h1>
-                <p class="sub">{{ account.space }}, {{ account.facility.name }} · {{ account.category }} ({{ N(account.monthly) }} a month) · Account {{ account.code }}</p>
+                <p class="sub">{{ account.space }}<template v-if="account.category"> · {{ account.category }}</template> ({{ N(account.monthly) }} a month) · Account {{ account.code }}</p>
 
                 <div v-if="flash.error" class="notice" style="background: #d6454522; color: var(--red); margin-bottom: 12px">{{ flash.error }}</div>
                 <div v-if="flash.success" class="notice" style="margin-bottom: 12px">{{ flash.success }}</div>
